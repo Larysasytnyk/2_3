@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>2D PNG у 3D Рельєф без рамки</title>
+    <title>3D Конвертер об'ємних фігур</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -18,7 +18,7 @@
 <body class="bg-slate-900 text-slate-100">
 
     <div class="absolute top-4 left-4 z-10 bg-slate-800/90 backdrop-blur-md p-5 rounded-2xl shadow-2xl border border-slate-700 max-w-sm w-full">
-        <h1 class="text-xl font-bold mb-1 text-indigo-400">3D Рельєф без рамки</h1>
+        <h1 class="text-xl font-bold mb-1 text-indigo-400">3D Об'ємний Конвертер</h1>
         <p class="text-xs text-slate-400 mb-4">Формати: <span class="font-semibold text-slate-200">.PNG, .JPG, .SVG</span></p>
         
         <label class="flex flex-col items-center justify-center border-2 border-dashed border-indigo-500/50 hover:border-indigo-400 rounded-xl p-3 cursor-pointer bg-slate-900/50 transition-all hover:bg-slate-900 mb-4">
@@ -31,10 +31,10 @@
 
         <div class="mb-4">
             <div class="flex justify-between text-xs mb-1">
-                <span class="text-slate-300">Висота рельєфу (З):</span>
-                <span id="depthVal" class="text-indigo-400 font-bold">20</span>
+                <span class="text-slate-300">Товщина 3D моделі:</span>
+                <span id="depthVal" class="text-indigo-400 font-bold">25</span>
             </div>
-            <input type="range" id="extrusionDepth" min="2" max="60" value="20" class="w-full accent-indigo-500 cursor-pointer">
+            <input type="range" id="extrusionDepth" min="5" max="60" value="25" class="w-full accent-indigo-500 cursor-pointer">
         </div>
 
         <div class="grid grid-cols-2 gap-2 mb-3">
@@ -86,7 +86,7 @@
             scene.add(dirLight);
 
             const grid = new THREE.GridHelper(400, 40, 0x4f46e5, 0x334155);
-            grid.position.z = -20;
+            grid.position.z = -25;
             grid.rotation.x = Math.PI / 2;
             scene.add(grid);
 
@@ -112,7 +112,7 @@
 
             depthSlider.addEventListener('input', function() {
                 depthVal.textContent = this.value;
-                if (lastFileContent && lastFileType === 'image') {
+                if (lastFileContent) {
                     processFile(lastFileContent, lastFileType, parseFloat(this.value));
                 }
             });
@@ -172,23 +172,26 @@
                     const canvas = document.createElement('canvas');
                     const ctx = canvas.getContext('2d');
                     
-                    const width = 100;
-                    const height = Math.round(100 * (img.height / img.width));
+                    const width = 80;
+                    const height = Math.round(80 * (img.height / img.width));
                     canvas.width = width;
                     canvas.height = height;
                     
                     ctx.drawImage(img, 0, 0, width, height);
                     const imgData = ctx.getImageData(0, 0, width, height).data;
 
-                    const geometry = new THREE.BufferGeometry();
-                    const vertices = [];
-                    const indices = [];
-                    const uvs = [];
+                    const group = new THREE.Group();
+                    const texture = new THREE.TextureLoader().load(content);
+                    const material = new THREE.MeshStandardMaterial({
+                        map: texture,
+                        side: THREE.DoubleSide,
+                        roughness: 0.3
+                    });
 
-                    const scaleX = 200 / width;
-                    const scaleY = (200 * (height / width)) / height;
+                    // Створюємо повноцінні об'ємні колонки (стовпчики) лише для пікселів фігури без платформи під ними
+                    const scaleX = 180 / width;
+                    const scaleY = (180 * (height / width)) / height;
 
-                    // Створюємо вершини лише для пікселів, які не є повністю прозорими або фоновими
                     for (let y = 0; y < height; y++) {
                         for (let x = 0; x < width; x++) {
                             const i = (y * width + x) * 4;
@@ -197,53 +200,24 @@
                             const b = imgData[i + 2];
                             const a = imgData[i + 3];
 
-                            // Відсікаємо прозорі пікселі або дуже темний/білий однорідний фон за потреби
-                            let z = 0;
-                            if (a > 20) {
-                                const brightness = (r * 0.299 + g * 0.587 + b * 0.114) / 255;
-                                z = brightness * depth;
-                            } else {
-                                z = -9999; // ховаємо пікселі фону
-                            }
+                            // Пропускаємо повністю прозорий або білий/темний фон
+                            if (a < 30) continue;
+                            const brightness = (r * 0.299 + g * 0.587 + b * 0.114) / 255;
+                            const pixelDepth = Math.max(brightness * depth, 2);
 
-                            vertices.push((x - width / 2) * scaleX, (y - height / 2) * scaleY, z);
-                            uvs.push(x / width, 1 - y / height);
+                            const geom = new THREE.BoxGeometry(scaleX * 1.05, scaleY * 1.05, pixelDepth);
+                            const mesh = new THREE.Mesh(geom, material);
+                            
+                            mesh.position.set(
+                                (x - width / 2) * scaleX + scaleX / 2,
+                                (y - height / 2) * scaleY + scaleY / 2,
+                                pixelDepth / 2
+                            );
+                            group.add(mesh);
                         }
                     }
 
-                    // Формуємо трикутники сітки, пропускаючи відкинуті вершини
-                    for (let y = 0; y < height - 1; y++) {
-                        for (let x = 0; x < width - 1; x++) {
-                            const a = x + y * width;
-                            const b = (x + 1) + y * width;
-                            const c = x + (y + 1) * width;
-                            const d = (x + 1) + (y + 1) * width;
-
-                            if (vertices[a * 3 + 2] !== -9999 && vertices[b * 3 + 2] !== -9999 && vertices[c * 3 + 2] !== -9999) {
-                                indices.push(a, c, b);
-                            }
-                            if (vertices[b * 3 + 2] !== -9999 && vertices[c * 3 + 2] !== -9999 && vertices[d * 3 + 2] !== -9999) {
-                                indices.push(b, c, d);
-                            }
-                        }
-                    }
-
-                    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-                    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-                    geometry.setIndex(indices);
-                    geometry.computeVertexNormals();
-
-                    const texture = new THREE.TextureLoader().load(content);
-                    const material = new THREE.MeshStandardMaterial({
-                        map: texture,
-                        side: THREE.DoubleSide,
-                        roughness: 0.4,
-                        metalness: 0.1,
-                        transparent: true
-                    });
-
-                    const mesh = new THREE.Mesh(geometry, material);
-                    finishModel(mesh);
+                    finishModel(group);
                 };
             }
         }
@@ -264,13 +238,13 @@
         function exportToSTL() {
             if (!currentModel) return;
             const result = new THREE.STLExporter().parse(currentModel, { binary: true });
-            downloadBlob(new Blob([result], { type: 'application/octet-stream' }), 'model-no-border.stl');
+            downloadBlob(new Blob([result], { type: 'application/octet-stream' }), 'true-3d-model.stl');
         }
 
         function exportToGLB() {
             if (!currentModel) return;
             new THREE.GLTFExporter().parse(currentModel, function (gltf) {
-                downloadBlob(new Blob([gltf], { type: 'model/gltf-binary' }), 'model-no-border.glb');
+                downloadBlob(new Blob([gltf], { type: 'model/gltf-binary' }), 'true-3d-model.glb');
             }, { binary: true });
         }
 
