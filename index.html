@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>2D (PNG/SVG) в 3D Конвертер</title>
+    <title>2D PNG у 3D Рельєф Конвертер</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -18,7 +18,7 @@
 <body class="bg-slate-900 text-slate-100">
 
     <div class="absolute top-4 left-4 z-10 bg-slate-800/90 backdrop-blur-md p-5 rounded-2xl shadow-2xl border border-slate-700 max-w-sm w-full">
-        <h1 class="text-xl font-bold mb-1 text-indigo-400">2D в 3D Конвертер</h1>
+        <h1 class="text-xl font-bold mb-1 text-indigo-400">2D в 3D Рельєф</h1>
         <p class="text-xs text-slate-400 mb-4">Формати: <span class="font-semibold text-slate-200">.PNG, .JPG, .SVG</span></p>
         
         <label class="flex flex-col items-center justify-center border-2 border-dashed border-indigo-500/50 hover:border-indigo-400 rounded-xl p-3 cursor-pointer bg-slate-900/50 transition-all hover:bg-slate-900 mb-4">
@@ -31,10 +31,10 @@
 
         <div class="mb-4">
             <div class="flex justify-between text-xs mb-1">
-                <span class="text-slate-300">Товщина (глибина 3D):</span>
-                <span id="depthVal" class="text-indigo-400 font-bold">10</span>
+                <span class="text-slate-300">Висота рельєфу (Z):</span>
+                <span id="depthVal" class="text-indigo-400 font-bold">20</span>
             </div>
-            <input type="range" id="extrusionDepth" min="1" max="50" value="10" class="w-full accent-indigo-500 cursor-pointer">
+            <input type="range" id="extrusionDepth" min="2" max="60" value="20" class="w-full accent-indigo-500 cursor-pointer">
         </div>
 
         <div class="grid grid-cols-2 gap-2 mb-3">
@@ -70,7 +70,7 @@
             scene.background = new THREE.Color(0x0f172a);
 
             camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.set(0, 0, 300);
+            camera.position.set(0, -200, 200);
 
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
@@ -82,11 +82,12 @@
 
             scene.add(new THREE.AmbientLight(0xffffff, 0.7));
             const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
-            dirLight.position.set(100, 200, 200);
+            dirLight.position.set(100, -200, 300);
             scene.add(dirLight);
 
             const grid = new THREE.GridHelper(400, 40, 0x4f46e5, 0x334155);
-            grid.position.y = -50;
+            grid.position.z = -20;
+            grid.rotation.x = Math.PI / 2;
             scene.add(grid);
 
             animate();
@@ -111,7 +112,7 @@
 
             depthSlider.addEventListener('input', function() {
                 depthVal.textContent = this.value;
-                if (lastFileContent) {
+                if (lastFileContent && lastFileType === 'image') {
                     processFile(lastFileContent, lastFileType, parseFloat(this.value));
                 }
             });
@@ -165,20 +166,54 @@
                 group.scale.y = -1;
                 finishModel(group);
             } else {
-                new THREE.TextureLoader().load(content, function(texture) {
-                    const aspect = texture.image.width / texture.image.height;
-                    const w = 150, h = w / aspect;
-                    const geom = new THREE.BoxGeometry(w, h, depth);
-                    const materials = [
-                        new THREE.MeshStandardMaterial({ color: 0x334155 }),
-                        new THREE.MeshStandardMaterial({ color: 0x334155 }),
-                        new THREE.MeshStandardMaterial({ color: 0x334155 }),
-                        new THREE.MeshStandardMaterial({ color: 0x334155 }),
-                        new THREE.MeshStandardMaterial({ map: texture }),
-                        new THREE.MeshStandardMaterial({ color: 0x334155 })
-                    ];
-                    finishModel(new THREE.Mesh(geom, materials));
-                });
+                // Перетворення PNG/JPG на об'ємний 3D-рельєф (Heightmap)
+                const img = new Image();
+                img.src = content;
+                img.onload = function() {
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    
+                    // Зменшуємо роздільну здатність сітки для оптимізації продуктивності
+                    const width = 120;
+                    const height = Math.round(120 * (img.height / img.width));
+                    canvas.width = width;
+                    canvas.height = height;
+                    
+                    ctx.drawImage(img, 0, 0, width, height);
+                    const imgData = ctx.getImageData(0, 0, width, height).data;
+
+                    // Створюємо площину із сіткою вертексів
+                    const geometry = new THREE.PlaneGeometry(200, 200 * (height / width), width - 1, height - 1);
+                    const positions = geometry.attributes.position;
+
+                    for (let i = 0; i < positions.count; i++) {
+                        const vx = i % width;
+                        const vy = Math.floor(i / width);
+                        const pixelIndex = (vy * width + vx) * 4;
+                        
+                        // Вираховуємо яскравість пікселя (0 - чорний, 255 - білий)
+                        const r = imgData[pixelIndex];
+                        const g = imgData[pixelIndex + 1];
+                        const b = imgData[pixelIndex + 2];
+                        const brightness = (r * 0.299 + g * 0.587 + b * 0.114) / 255;
+
+                        // Зміщуємо висоту вершини (вісь Z) залежно від яскравості
+                        positions.setZ(i, brightness * depth);
+                    }
+
+                    geometry.computeVertexNormals();
+
+                    const texture = new THREE.TextureLoader().load(content);
+                    const material = new THREE.MeshStandardMaterial({
+                        map: texture,
+                        side: THREE.DoubleSide,
+                        roughness: 0.4,
+                        metalness: 0.1
+                    });
+
+                    const mesh = new THREE.Mesh(geometry, material);
+                    finishModel(mesh);
+                };
             }
         }
 
@@ -190,7 +225,7 @@
 
             const size = box.getSize(new THREE.Vector3());
             let dist = Math.max(size.x, size.y, size.z) * 2.5;
-            camera.position.set(0, 0, dist < 100 ? 150 : dist);
+            camera.position.set(0, -dist * 0.8, dist * 0.6);
             controls.target.set(0, 0, 0);
             controls.update();
         }
@@ -198,13 +233,13 @@
         function exportToSTL() {
             if (!currentModel) return;
             const result = new THREE.STLExporter().parse(currentModel, { binary: true });
-            downloadBlob(new Blob([result], { type: 'application/octet-stream' }), 'model.stl');
+            downloadBlob(new Blob([result], { type: 'application/octet-stream' }), 'relief-model.stl');
         }
 
         function exportToGLB() {
             if (!currentModel) return;
             new THREE.GLTFExporter().parse(currentModel, function (gltf) {
-                downloadBlob(new Blob([gltf], { type: 'model/gltf-binary' }), 'model.glb');
+                downloadBlob(new Blob([gltf], { type: 'model/gltf-binary' }), 'relief-model.glb');
             }, { binary: true });
         }
 
