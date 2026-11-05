@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>2D PNG у 3D Рельєф Конвертер</title>
+    <title>2D PNG у 3D Рельєф без рамки</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -18,7 +18,7 @@
 <body class="bg-slate-900 text-slate-100">
 
     <div class="absolute top-4 left-4 z-10 bg-slate-800/90 backdrop-blur-md p-5 rounded-2xl shadow-2xl border border-slate-700 max-w-sm w-full">
-        <h1 class="text-xl font-bold mb-1 text-indigo-400">2D в 3D Рельєф</h1>
+        <h1 class="text-xl font-bold mb-1 text-indigo-400">3D Рельєф без рамки</h1>
         <p class="text-xs text-slate-400 mb-4">Формати: <span class="font-semibold text-slate-200">.PNG, .JPG, .SVG</span></p>
         
         <label class="flex flex-col items-center justify-center border-2 border-dashed border-indigo-500/50 hover:border-indigo-400 rounded-xl p-3 cursor-pointer bg-slate-900/50 transition-all hover:bg-slate-900 mb-4">
@@ -31,7 +31,7 @@
 
         <div class="mb-4">
             <div class="flex justify-between text-xs mb-1">
-                <span class="text-slate-300">Висота рельєфу (Z):</span>
+                <span class="text-slate-300">Висота рельєфу (З):</span>
                 <span id="depthVal" class="text-indigo-400 font-bold">20</span>
             </div>
             <input type="range" id="extrusionDepth" min="2" max="60" value="20" class="w-full accent-indigo-500 cursor-pointer">
@@ -166,41 +166,71 @@
                 group.scale.y = -1;
                 finishModel(group);
             } else {
-                // Перетворення PNG/JPG на об'ємний 3D-рельєф (Heightmap)
                 const img = new Image();
                 img.src = content;
                 img.onload = function() {
                     const canvas = document.createElement('canvas');
                     const ctx = canvas.getContext('2d');
                     
-                    // Зменшуємо роздільну здатність сітки для оптимізації продуктивності
-                    const width = 120;
-                    const height = Math.round(120 * (img.height / img.width));
+                    const width = 100;
+                    const height = Math.round(100 * (img.height / img.width));
                     canvas.width = width;
                     canvas.height = height;
                     
                     ctx.drawImage(img, 0, 0, width, height);
                     const imgData = ctx.getImageData(0, 0, width, height).data;
 
-                    // Створюємо площину із сіткою вертексів
-                    const geometry = new THREE.PlaneGeometry(200, 200 * (height / width), width - 1, height - 1);
-                    const positions = geometry.attributes.position;
+                    const geometry = new THREE.BufferGeometry();
+                    const vertices = [];
+                    const indices = [];
+                    const uvs = [];
 
-                    for (let i = 0; i < positions.count; i++) {
-                        const vx = i % width;
-                        const vy = Math.floor(i / width);
-                        const pixelIndex = (vy * width + vx) * 4;
-                        
-                        // Вираховуємо яскравість пікселя (0 - чорний, 255 - білий)
-                        const r = imgData[pixelIndex];
-                        const g = imgData[pixelIndex + 1];
-                        const b = imgData[pixelIndex + 2];
-                        const brightness = (r * 0.299 + g * 0.587 + b * 0.114) / 255;
+                    const scaleX = 200 / width;
+                    const scaleY = (200 * (height / width)) / height;
 
-                        // Зміщуємо висоту вершини (вісь Z) залежно від яскравості
-                        positions.setZ(i, brightness * depth);
+                    // Створюємо вершини лише для пікселів, які не є повністю прозорими або фоновими
+                    for (let y = 0; y < height; y++) {
+                        for (let x = 0; x < width; x++) {
+                            const i = (y * width + x) * 4;
+                            const r = imgData[i];
+                            const g = imgData[i + 1];
+                            const b = imgData[i + 2];
+                            const a = imgData[i + 3];
+
+                            // Відсікаємо прозорі пікселі або дуже темний/білий однорідний фон за потреби
+                            let z = 0;
+                            if (a > 20) {
+                                const brightness = (r * 0.299 + g * 0.587 + b * 0.114) / 255;
+                                z = brightness * depth;
+                            } else {
+                                z = -9999; // ховаємо пікселі фону
+                            }
+
+                            vertices.push((x - width / 2) * scaleX, (y - height / 2) * scaleY, z);
+                            uvs.push(x / width, 1 - y / height);
+                        }
                     }
 
+                    // Формуємо трикутники сітки, пропускаючи відкинуті вершини
+                    for (let y = 0; y < height - 1; y++) {
+                        for (let x = 0; x < width - 1; x++) {
+                            const a = x + y * width;
+                            const b = (x + 1) + y * width;
+                            const c = x + (y + 1) * width;
+                            const d = (x + 1) + (y + 1) * width;
+
+                            if (vertices[a * 3 + 2] !== -9999 && vertices[b * 3 + 2] !== -9999 && vertices[c * 3 + 2] !== -9999) {
+                                indices.push(a, c, b);
+                            }
+                            if (vertices[b * 3 + 2] !== -9999 && vertices[c * 3 + 2] !== -9999 && vertices[d * 3 + 2] !== -9999) {
+                                indices.push(b, c, d);
+                            }
+                        }
+                    }
+
+                    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+                    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+                    geometry.setIndex(indices);
                     geometry.computeVertexNormals();
 
                     const texture = new THREE.TextureLoader().load(content);
@@ -208,7 +238,8 @@
                         map: texture,
                         side: THREE.DoubleSide,
                         roughness: 0.4,
-                        metalness: 0.1
+                        metalness: 0.1,
+                        transparent: true
                     });
 
                     const mesh = new THREE.Mesh(geometry, material);
@@ -233,13 +264,13 @@
         function exportToSTL() {
             if (!currentModel) return;
             const result = new THREE.STLExporter().parse(currentModel, { binary: true });
-            downloadBlob(new Blob([result], { type: 'application/octet-stream' }), 'relief-model.stl');
+            downloadBlob(new Blob([result], { type: 'application/octet-stream' }), 'model-no-border.stl');
         }
 
         function exportToGLB() {
             if (!currentModel) return;
             new THREE.GLTFExporter().parse(currentModel, function (gltf) {
-                downloadBlob(new Blob([gltf], { type: 'model/gltf-binary' }), 'relief-model.glb');
+                downloadBlob(new Blob([gltf], { type: 'model/gltf-binary' }), 'model-no-border.glb');
             }, { binary: true });
         }
 
